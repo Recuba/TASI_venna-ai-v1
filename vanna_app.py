@@ -23,9 +23,22 @@ load_dotenv()
 # Configuration
 # =============================================================================
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://tasi:tasi_dev_123@localhost:5433/tasi_financials")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+# SECURITY: Use environment variables only - no hardcoded credentials!
+# Copy .env.example to .env and configure your settings there.
+DATABASE_URL = os.getenv("DATABASE_URL")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 CHROMA_PERSIST_DIR = Path(__file__).parent / "chroma_db"
+
+# Validate required configuration
+if not DATABASE_URL:
+    print("ERROR: DATABASE_URL environment variable is required.")
+    print("Copy .env.example to .env and configure your database connection.")
+    sys.exit(1)
+
+if not OPENROUTER_API_KEY:
+    print("ERROR: OPENROUTER_API_KEY environment variable is required.")
+    print("Get your API key from https://openrouter.ai/keys")
+    sys.exit(1)
 
 
 # =============================================================================
@@ -33,6 +46,14 @@ CHROMA_PERSIST_DIR = Path(__file__).parent / "chroma_db"
 # =============================================================================
 
 from openai import OpenAI
+
+# Import SQL validator for security
+try:
+    from sql_validator import SQLValidator
+    SQL_VALIDATOR_AVAILABLE = True
+except ImportError:
+    SQL_VALIDATOR_AVAILABLE = False
+    print("Warning: SQL validator not available. Running without query validation.")
 
 class OpenRouterLlmService:
     """LLM Service using OpenRouter API with Gemini Flash 2.5"""
@@ -246,10 +267,34 @@ The main view for querying is `company_financials` which contains:
         Ask a question in natural language and get results.
         Returns both the generated SQL and the query results.
         """
+        sql = None
         try:
             # Generate SQL
             sql = self.generate_sql(question)
             print(f"\nGenerated SQL:\n{sql}\n")
+
+            # Validate SQL for security (if validator is available)
+            if SQL_VALIDATOR_AVAILABLE:
+                validator = SQLValidator()
+                validation = validator.validate(sql)
+
+                if not validation.is_valid:
+                    error_msg = "; ".join(validation.errors)
+                    print(f"SQL Validation Failed: {error_msg}")
+                    return {
+                        "question": question,
+                        "sql": sql,
+                        "results": None,
+                        "success": False,
+                        "error": f"SQL validation failed: {error_msg}"
+                    }
+
+                # Use the validated (potentially modified) SQL
+                sql = validation.sql
+
+                if validation.warnings:
+                    for warning in validation.warnings:
+                        print(f"Warning: {warning}")
 
             # Execute SQL
             results = self.sql_runner.run_sql(sql)
@@ -264,7 +309,7 @@ The main view for querying is `company_financials` which contains:
         except Exception as e:
             return {
                 "question": question,
-                "sql": sql if 'sql' in dir() else None,
+                "sql": sql,
                 "results": None,
                 "success": False,
                 "error": str(e)

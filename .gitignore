@@ -28,6 +28,27 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
 
 # Docker volumes (local data)
 postgres_data/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Temporary files
+*.tmp
+*.temp

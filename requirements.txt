@@ -1,21 +1,50 @@
 # TASI Financial Database - Python Dependencies
 
-# Database
-psycopg2-binary>=2.9.9
-pgvector>=0.2.4
+# =============================================================================
+# Core Database
+# =============================================================================
+psycopg2-binary>=2.9.9       # PostgreSQL adapter
+pgvector>=0.2.4              # Vector operations for semantic search
 
+# =============================================================================
 # Data Processing
-pandas>=2.0.0
-numpy>=1.24.0
+# =============================================================================
+pandas>=2.0.0                # Data manipulation and analysis
+numpy>=1.24.0                # Numeric operations
 
-# Vanna AI
-vanna>=0.5.0
+# =============================================================================
+# AI/ML Integration
+# =============================================================================
+vanna>=0.5.0                 # Vanna AI for natural language to SQL
+openai>=1.0.0                # OpenAI SDK (also works with OpenRouter)
 
-# OpenAI (for embeddings)
-openai>=1.0.0
+# =============================================================================
+# Web Interface
+# =============================================================================
+streamlit>=1.30.0            # Web application framework
 
-# Environment management
-python-dotenv>=1.0.0
+# =============================================================================
+# Configuration & Environment
+# =============================================================================
+python-dotenv>=1.0.0         # Environment variable management
+pydantic>=2.0.0              # Data validation
 
-# Optional: For async operations
-asyncpg>=0.29.0
+# =============================================================================
+# Testing
+# =============================================================================
+pytest>=7.0.0                # Testing framework
+pytest-cov>=4.0.0            # Code coverage
+pytest-asyncio>=0.21.0       # Async test support
+
+# =============================================================================
+# Optional: Async Operations
+# =============================================================================
+asyncpg>=0.29.0              # Async PostgreSQL adapter
+
+# =============================================================================
+# Development
+# =============================================================================
+# black>=23.0.0              # Code formatting
+# isort>=5.12.0              # Import sorting
+# flake8>=6.0.0              # Linting
+# mypy>=1.0.0                # Type checking
