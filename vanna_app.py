@@ -34,7 +34,7 @@ QUERY_LOG_DIR = Path(__file__).parent / "query_logs"
 
 # Logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()],
 )
