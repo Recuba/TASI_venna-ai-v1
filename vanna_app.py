@@ -32,10 +32,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://tasi:tasi_dev_123@localho
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 QUERY_LOG_DIR = Path(__file__).parent / "query_logs"
 
-if not OPENROUTER_API_KEY:
-    print("WARNING: OPENROUTER_API_KEY not set. Please set it in your .env file.")
-    print("Get your key from: https://openrouter.ai/keys")
-
 # Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -210,7 +206,7 @@ class PostgresRunner:
     MAX_RESULT_ROWS = 5000  # Hard cap to prevent memory exhaustion
     STATEMENT_TIMEOUT_MS = 30000  # 30s max per query
 
-    def __init__(self, connection_string: str = None, connect_timeout: int = 10, max_retries: int = 3):
+    def __init__(self, connection_string: str = None, connect_timeout: int = 5, max_retries: int = 2):
         self.connection_string = connection_string or DATABASE_URL
         self.connect_timeout = connect_timeout
         self.max_retries = max_retries
@@ -329,9 +325,22 @@ class TASIFinancialAgent:
     def __init__(self):
         self.llm = OpenRouterLlmService()
         self.sql_runner = PostgresRunner()
-        self.schema = self.sql_runner.get_schema()
         self.history = QueryHistory()
         self.training_examples = self._load_training_examples()
+        self._db_error: Optional[str] = None
+
+        # Try to fetch schema; store error instead of crashing
+        try:
+            self.schema = self.sql_runner.get_schema()
+        except Exception as e:
+            self._db_error = str(e)
+            self.schema = "(schema unavailable - database connection failed)"
+            logger.error("Could not fetch schema on startup: %s", e)
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the agent successfully connected to the database."""
+        return self._db_error is None
 
     def _load_training_examples(self) -> str:
         """Load training examples for few-shot prompting."""
@@ -543,13 +552,11 @@ def run_streamlit():
     # ---- Session state initialization ----
     if "agent" not in st.session_state:
         with st.spinner("Connecting to database and initializing AI agent..."):
-            try:
-                st.session_state.agent = TASIFinancialAgent()
-                st.session_state.db_connected = True
-            except Exception as e:
-                st.session_state.agent = None
-                st.session_state.db_connected = False
-                st.session_state.db_error = str(e)
+            agent = TASIFinancialAgent()
+            st.session_state.agent = agent
+            st.session_state.db_connected = agent.is_connected
+            if not agent.is_connected:
+                st.session_state.db_error = agent._db_error
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -692,9 +699,19 @@ def run_cli():
     print("TASI Financial Database - Vanna AI Agent")
     print("Powered by Gemini Flash 2.5 via OpenRouter")
     print("=" * 60)
+    if not OPENROUTER_API_KEY:
+        print("ERROR: OPENROUTER_API_KEY is not set.")
+        print("Set it in your .env file. Get a key from: https://openrouter.ai/keys")
+        return
+
     print("\nInitializing agent...")
 
     agent = TASIFinancialAgent()
+
+    if not agent.is_connected:
+        print(f"WARNING: Database connection failed: {agent._db_error}")
+        print("Queries will fail until the database is available.")
+        print("Start it with: docker-compose up -d\n")
 
     print("Agent ready! Ask questions about TASI-listed companies.")
     print("Type 'quit' or 'exit' to stop.")

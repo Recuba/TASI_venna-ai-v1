@@ -566,8 +566,8 @@ class TestPostgresRunner:
     def test_init_defaults(self):
         runner = PostgresRunner(connection_string="postgres://test")
         assert runner.connection_string == "postgres://test"
-        assert runner.connect_timeout == 10
-        assert runner.max_retries == 3
+        assert runner.connect_timeout == 5
+        assert runner.max_retries == 2
         assert runner._conn is None
         assert runner._schema_cache is None
 
@@ -585,7 +585,7 @@ class TestPostgresRunner:
 
         assert conn is mock_conn
         mock_conn.set_session.assert_called_once_with(readonly=True, autocommit=True)
-        mock_connect.assert_called_once_with("postgres://test", connect_timeout=10)
+        mock_connect.assert_called_once_with("postgres://test", connect_timeout=5)
 
     @patch("vanna_app.psycopg2.connect")
     def test_get_connection_reuses_existing(self, mock_connect):
@@ -821,6 +821,17 @@ class TestTASIFinancialAgent:
         assert agent.history is not None
         assert isinstance(agent.history, QueryHistory)
         assert agent.training_examples is not None
+        assert agent.is_connected is True
+        assert agent._db_error is None
+
+    def test_init_survives_db_failure(self):
+        """Agent should initialize even when the database is unavailable."""
+        with patch.object(PostgresRunner, "get_schema", side_effect=ConnectionError("DB down")), \
+             patch.object(OpenRouterLlmService, "__init__", return_value=None):
+            agent = TASIFinancialAgent()
+            assert agent.is_connected is False
+            assert "DB down" in agent._db_error
+            assert "unavailable" in agent.schema
 
     def test_load_training_examples(self):
         agent = _make_mock_agent()
