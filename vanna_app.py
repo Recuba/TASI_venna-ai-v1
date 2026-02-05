@@ -440,12 +440,15 @@ The main view for querying is `company_financials` which contains:
         if match:
             return match.group(1).strip()
 
-        # Otherwise strip surrounding prose: find the first SELECT / WITH
+        # Otherwise strip surrounding prose: find the earliest SQL keyword
         upper = text.upper()
-        for keyword in ("SELECT", "WITH", "EXPLAIN"):
+        earliest_idx = len(text)
+        for keyword in ("EXPLAIN", "WITH", "SELECT"):
             idx = upper.find(keyword)
-            if idx != -1:
-                return text[idx:].rstrip(";").strip() + ";"
+            if idx != -1 and idx < earliest_idx:
+                earliest_idx = idx
+        if earliest_idx < len(text):
+            return text[earliest_idx:].rstrip(";").strip() + ";"
 
         # Fallback: return as-is (will be caught by safety validator)
         return text
