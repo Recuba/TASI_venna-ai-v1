@@ -16,6 +16,10 @@ ENV/
 # ChromaDB local storage
 chroma_db/
 
+# Query logs and exports
+query_logs/
+tasi_results_*
+
 # IDE
 .idea/
 .vscode/
