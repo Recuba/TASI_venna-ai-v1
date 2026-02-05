@@ -33,5 +33,10 @@ Thumbs.db
 # Logs
 *.log
 
+# Test / coverage artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+
 # Docker volumes (local data)
 postgres_data/
