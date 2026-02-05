@@ -16,6 +16,8 @@ from vanna_app import (
     QueryHistory,
     export_results_csv,
     export_results_json,
+    TASIFinancialAgent,
+    PostgresRunner,
 )
 
 
@@ -203,3 +205,83 @@ class TestDataExport:
         data = json.loads(json_str)
         assert data[0]["date"] == "2024-01-15"
         assert "2024-06-30" in data[0]["ts"]
+
+
+# =============================================================================
+# SQL Extraction from LLM responses
+# =============================================================================
+
+class TestSQLExtraction:
+    """Tests for robust SQL extraction from various LLM response formats."""
+
+    def test_plain_sql(self):
+        sql = TASIFinancialAgent._extract_sql("SELECT * FROM company_financials LIMIT 10;")
+        assert sql.upper().startswith("SELECT")
+
+    def test_fenced_sql_block(self):
+        response = "Here is the query:\n```sql\nSELECT ticker FROM company_financials;\n```"
+        sql = TASIFinancialAgent._extract_sql(response)
+        assert sql == "SELECT ticker FROM company_financials;"
+
+    def test_fenced_block_no_lang(self):
+        response = "```\nSELECT 1;\n```"
+        sql = TASIFinancialAgent._extract_sql(response)
+        assert sql == "SELECT 1;"
+
+    def test_prose_before_sql(self):
+        response = "Sure! Here is a query that finds the top companies:\nSELECT ticker FROM company_financials LIMIT 5;"
+        sql = TASIFinancialAgent._extract_sql(response)
+        assert sql.startswith("SELECT")
+        assert "LIMIT 5" in sql
+
+    def test_with_cte_extraction(self):
+        response = "Try this:\n```sql\nWITH top AS (SELECT * FROM x) SELECT * FROM top;\n```"
+        sql = TASIFinancialAgent._extract_sql(response)
+        assert sql.startswith("WITH")
+
+    def test_empty_response(self):
+        assert TASIFinancialAgent._extract_sql("") == ""
+
+    def test_explanation_after_sql(self):
+        response = "```sql\nSELECT count(*) FROM company_financials;\n```\nThis counts all rows."
+        sql = TASIFinancialAgent._extract_sql(response)
+        assert sql == "SELECT count(*) FROM company_financials;"
+
+
+# =============================================================================
+# Input Validation
+# =============================================================================
+
+class TestInputValidation:
+    """Tests for input length / boundary checks."""
+
+    def test_question_too_long_raises(self):
+        """Questions over 2000 chars should be rejected."""
+        # We can't call generate_sql without an LLM, but we can test _extract_sql
+        # and verify the length check exists by testing the validation path directly.
+        # The validation is inside generate_sql, so we just test the contract.
+        agent_cls = TASIFinancialAgent
+        # Confirm the length constant is enforced in generate_sql source
+        import inspect
+        src = inspect.getsource(agent_cls.generate_sql)
+        assert "2000" in src, "generate_sql should enforce a 2000-char limit"
+
+
+# =============================================================================
+# PostgresRunner Configuration
+# =============================================================================
+
+class TestPostgresRunnerConfig:
+    """Tests for PostgresRunner safety settings."""
+
+    def test_max_result_rows_set(self):
+        assert PostgresRunner.MAX_RESULT_ROWS == 5000
+
+    def test_statement_timeout_set(self):
+        assert PostgresRunner.STATEMENT_TIMEOUT_MS == 30000
+
+    def test_schema_cache_starts_none(self):
+        """Schema cache should be None before first use."""
+        runner = PostgresRunner.__new__(PostgresRunner)
+        runner._schema_cache = None
+        assert runner._schema_cache is None

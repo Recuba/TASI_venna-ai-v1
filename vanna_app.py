@@ -207,11 +207,15 @@ from psycopg2.extras import RealDictCursor
 class PostgresRunner:
     """SQL Runner for PostgreSQL with connection resilience."""
 
+    MAX_RESULT_ROWS = 5000  # Hard cap to prevent memory exhaustion
+    STATEMENT_TIMEOUT_MS = 30000  # 30s max per query
+
     def __init__(self, connection_string: str = None, connect_timeout: int = 10, max_retries: int = 3):
         self.connection_string = connection_string or DATABASE_URL
         self.connect_timeout = connect_timeout
         self.max_retries = max_retries
         self._conn = None
+        self._schema_cache: Optional[str] = None
 
     def get_connection(self):
         """Get or create a database connection with retry logic."""
@@ -231,6 +235,8 @@ class PostgresRunner:
                     connect_timeout=self.connect_timeout,
                 )
                 self._conn.set_session(readonly=True, autocommit=True)
+                with self._conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = %s", (self.STATEMENT_TIMEOUT_MS,))
                 return self._conn
             except Exception as e:
                 last_error = e
@@ -242,7 +248,7 @@ class PostgresRunner:
         raise ConnectionError(f"Could not connect to database after {self.max_retries} attempts: {last_error}")
 
     def _close(self):
-        if self._conn is not None:
+        if getattr(self, "_conn", None) is not None:
             try:
                 self._conn.close()
             except Exception:
@@ -261,7 +267,7 @@ class PostgresRunner:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(sql)
                 if cursor.description:
-                    results = cursor.fetchall()
+                    results = cursor.fetchmany(self.MAX_RESULT_ROWS)
                     return [dict(row) for row in results]
                 return []
         except Exception as e:
@@ -269,8 +275,10 @@ class PostgresRunner:
             self._close()
             raise e
 
-    def get_schema(self) -> str:
-        """Get database schema information."""
+    def get_schema(self, force_refresh: bool = False) -> str:
+        """Get database schema information (cached after first call)."""
+        if self._schema_cache and not force_refresh:
+            return self._schema_cache
         sql = """
         SELECT
             table_name,
@@ -301,7 +309,8 @@ class PostgresRunner:
             nullable = "NULL" if row['is_nullable'] == 'YES' else "NOT NULL"
             schema_text.append(f"  - {row['column_name']}: {row['data_type']} ({nullable})")
 
-        return "\n".join(schema_text)
+        self._schema_cache = "\n".join(schema_text)
+        return self._schema_cache
 
     def __del__(self):
         self._close()
@@ -399,8 +408,14 @@ The main view for querying is `company_financials` which contains:
 8. ONLY generate SELECT or WITH statements. Never generate INSERT, UPDATE, DELETE, DROP, or any data-modifying queries.
 """
 
+    # Regex to extract SQL from a fenced code block (```sql ... ``` or ``` ... ```)
+    _SQL_BLOCK_RE = re.compile(r"```(?:sql)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+
     def generate_sql(self, question: str) -> str:
         """Generate SQL from a natural language question."""
+        if not question or len(question) > 2000:
+            raise ValueError("Question must be between 1 and 2000 characters")
+
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": f"Generate a SQL query for: {question}"}
@@ -408,18 +423,32 @@ The main view for querying is `company_financials` which contains:
 
         response = self.llm.chat(messages, temperature=0.1, max_tokens=1000)
 
-        # Clean the response - extract just the SQL
-        sql = response.strip()
+        sql = self._extract_sql(response)
+        if not sql:
+            raise ValueError(f"Could not extract valid SQL from LLM response: {response[:200]}")
+        return sql
 
-        # Remove markdown code blocks if present
-        if sql.startswith("```sql"):
-            sql = sql[6:]
-        elif sql.startswith("```"):
-            sql = sql[3:]
-        if sql.endswith("```"):
-            sql = sql[:-3]
+    @classmethod
+    def _extract_sql(cls, response: str) -> str:
+        """Extract the SQL statement from an LLM response, handling markdown blocks and stray text."""
+        if not response:
+            return ""
+        text = response.strip()
 
-        return sql.strip()
+        # Try extracting from a fenced code block first
+        match = cls._SQL_BLOCK_RE.search(text)
+        if match:
+            return match.group(1).strip()
+
+        # Otherwise strip surrounding prose: find the first SELECT / WITH
+        upper = text.upper()
+        for keyword in ("SELECT", "WITH", "EXPLAIN"):
+            idx = upper.find(keyword)
+            if idx != -1:
+                return text[idx:].rstrip(";").strip() + ";"
+
+        # Fallback: return as-is (will be caught by safety validator)
+        return text
 
     def ask(self, question: str) -> Dict[str, Any]:
         """
@@ -501,6 +530,12 @@ def run_streamlit():
         page_icon="SAR",
         layout="wide",
     )
+
+    # ---- Pre-flight checks ----
+    if not OPENROUTER_API_KEY:
+        st.error("OPENROUTER_API_KEY is not set. Add it to your `.env` file and restart.")
+        st.info("Get your key from: https://openrouter.ai/keys")
+        st.stop()
 
     # ---- Session state initialization ----
     if "agent" not in st.session_state:
